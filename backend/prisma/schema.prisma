@@ -1,0 +1,284 @@
+// Basil — data model.
+// Uses SQLite for zero-config local dev. To go to Postgres in production,
+// change `provider` to "postgresql" and point DATABASE_URL at your instance —
+// no model changes required. JSON-ish fields are stored as String (JSON text)
+// for SQLite portability; helpers in lib/json.ts (de)serialize them.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id        String   @id @default(cuid())
+  name      String
+  email     String   @unique
+  company   String?
+  password  String // bcrypt hash
+  role      String   @default("dispatcher") // admin | dispatcher
+  createdAt DateTime @default(now())
+
+  dispatcher Dispatcher?
+}
+
+model Dispatcher {
+  id           String   @id @default(cuid())
+  userId       String   @unique
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  phoneNumber  String? // where transferred calls are bridged to
+  phoneVerified Boolean @default(false)
+  useWebrtc    Boolean  @default(false)
+  availability String   @default("offline") // available | busy | offline
+  createdAt    DateTime @default(now())
+
+  queuePicks DispatchQueue[]
+}
+
+model AgentGroup {
+  id            String   @id @default(cuid())
+  name          String
+  description   String?
+  color         String   @default("green")
+  voiceConfig   String? // JSON
+  modelConfig   String? // JSON
+  createdAt     DateTime @default(now())
+
+  agents  Agent[]
+  prompts PromptVersion[]
+}
+
+model Agent {
+  id                 String   @id @default(cuid())
+  name               String   @unique
+  description        String?
+  role               String?
+  color              String   @default("green")
+  groupId            String?
+  group              AgentGroup? @relation(fields: [groupId], references: [id], onDelete: SetNull)
+
+  voiceProvider      String   @default("elevenlabs")
+  voiceId            String   @default("Josh")
+  voiceStability     Float    @default(0.6)
+  voiceSpeed         Float    @default(1.0)
+  firstMessage       String?
+  endCallMessage     String?
+
+  llmModel           String   @default("gemini-3.1-flash-live-preview")
+  temperature        Float    @default(0.7)
+  maxCallDurationSec Int      @default(300)
+  ringTimeoutSec     Int      @default(24)
+  recordingEnabled   Boolean  @default(true)
+  amdEnabled         Boolean  @default(true)
+  preferredProvider  String   @default("telnyx")
+
+  assignedNumberId   String?  @unique
+  assignedNumber     PhoneNumber? @relation(fields: [assignedNumberId], references: [id])
+
+  status             String   @default("idle") // live | idle | paused | offline
+  createdById        String?
+  createdAt          DateTime @default(now())
+
+  prompts PromptVersion[]
+  calls   Call[]
+}
+
+model PhoneNumber {
+  id              String   @id @default(cuid())
+  e164            String   @unique
+  label           String?
+  provider        String   @default("telnyx")
+  providerId      String?
+  areaCode        String?
+  status          String   @default("available") // available | assigned | disabled | cooldown
+  dailyCallCount  Int      @default(0)
+  lastUsedAt      DateTime?
+  cooldownUntil   DateTime?
+  createdAt       DateTime @default(now())
+
+  agent Agent?
+  calls Call[]
+}
+
+model Driver {
+  id            String   @id @default(cuid())
+  name          String
+  phone         String   @unique
+  email         String?
+  truckType     String?
+  locationCity  String?
+  locationState String?
+  truck         String?
+  mcNumber      String?
+  dotNumber     String?
+  status        String   @default("active") // active | dnc | blacklisted
+  statusCalled  String   @default("pending") // see lifecycle enum in docs
+  reliability   Int      @default(3)
+  preferredLanes String? // JSON
+  rateExpectation String?
+  notes         String?
+  lastCalledAt  DateTime?
+  sourceSheetId String?
+  createdAt     DateTime @default(now())
+
+  calls       Call[]
+  queueItems  DispatchQueue[]
+}
+
+model LoadGroup {
+  id        String   @id @default(cuid())
+  name      String
+  createdAt DateTime @default(now())
+  loads     Load[]
+}
+
+model Load {
+  id            String   @id @default(cuid())
+  reference     String   @unique
+  originCity    String
+  originState   String
+  destCity      String
+  destState     String
+  truckType     String
+  weightLbs     Int?
+  commodity     String?
+  miles         Int?
+  rateTotal     Float
+  ratePerMile   Float?
+  minRate       Float?
+  pickupAt      DateTime?
+  deliveryAt    DateTime?
+  status        String   @default("available") // available | offered | booked | delivered
+  groupId       String?
+  group         LoadGroup? @relation(fields: [groupId], references: [id], onDelete: SetNull)
+  bookedDriverId String?
+  source        String   @default("manual") // manual | csv | dat_api
+  brokerInfo    String? // JSON
+  specialReq    String?
+  createdAt     DateTime @default(now())
+
+  calls Call[]
+}
+
+model Campaign {
+  id                  String   @id @default(cuid())
+  name                String
+  status              String   @default("draft") // draft | active | calling | paused | completed
+  loadIds             String   @default("[]") // JSON array
+  driverFilter        String? // JSON
+  agentIds            String   @default("[]") // JSON array
+  agentGroupId        String?
+  callWindowStart     String   @default("08:00")
+  callWindowEnd       String   @default("16:00")
+  timezone            String   @default("America/Chicago")
+  maxRetries          Int      @default(2)
+  retryDelayMin       Int      @default(120)
+  parallelPerAgent    Int      @default(1)
+
+  driversTotal        Int      @default(0)
+  driversCalled       Int      @default(0)
+  connectedCount      Int      @default(0)
+  bookedCount         Int      @default(0)
+
+  startedAt           DateTime?
+  completedAt         DateTime?
+  createdAt           DateTime @default(now())
+
+  calls Call[]
+}
+
+model Call {
+  id            String   @id @default(cuid())
+  campaignId    String?
+  campaign      Campaign? @relation(fields: [campaignId], references: [id], onDelete: SetNull)
+  agentId       String?
+  agent         Agent?   @relation(fields: [agentId], references: [id], onDelete: SetNull)
+  driverId      String?
+  driver        Driver?  @relation(fields: [driverId], references: [id], onDelete: SetNull)
+  loadId        String?
+  load          Load?    @relation(fields: [loadId], references: [id], onDelete: SetNull)
+  numberId      String?
+  number        PhoneNumber? @relation(fields: [numberId], references: [id], onDelete: SetNull)
+
+  provider       String   @default("telnyx")
+  providerCallId String?
+  fromNumber     String?
+  toNumber       String?
+
+  status        String   @default("queued") // see state machine
+  outcome       String? // booked | callback | not_interested | no_answer | transferred | ...
+  amdResult     String? // human | machine | unknown
+  sentiment     String?
+  cost          Float    @default(0)
+  recordingUrl  String?
+
+  startedAt     DateTime?
+  answeredAt    DateTime?
+  endedAt       DateTime?
+  durationSec   Int      @default(0)
+
+  transferredToDispatcherId String?
+  createdAt     DateTime @default(now())
+
+  note  CallNote?
+  queueItem DispatchQueue?
+}
+
+model CallNote {
+  id            String   @id @default(cuid())
+  callId        String   @unique
+  call          Call     @relation(fields: [callId], references: [id], onDelete: Cascade)
+  driverId      String?
+  loadId        String?
+  aiSummary     String?
+  driverInfo    String   @default("[]") // JSON array of strings
+  transcript    String   @default("[]") // JSON array of {speaker, text, t}
+  outcome       String?
+  sentiment     String?
+  dispatcherNote String?
+  dispatcherNoteBy String?
+  createdAt     DateTime @default(now())
+}
+
+model DispatchQueue {
+  id             String   @id @default(cuid())
+  callId         String   @unique
+  call           Call     @relation(fields: [callId], references: [id], onDelete: Cascade)
+  driverId       String?
+  driver         Driver?  @relation(fields: [driverId], references: [id], onDelete: SetNull)
+  driverPhone    String
+  driverName     String
+  truckType      String?
+  location       String?
+  loadId         String?
+  loadRef        String?
+  loadRoute      String?
+  loadRate       String?
+  aiSummary      String?
+  transferReason String?
+  parkedProviderCallId String?
+  status         String   @default("waiting") // waiting | picking_up | connected | completed | abandoned
+  lockedById     String?
+  lockedBy       Dispatcher? @relation(fields: [lockedById], references: [id], onDelete: SetNull)
+  lockedByName   String?
+  enqueuedAt     DateTime @default(now())
+  pickedUpAt     DateTime?
+  completedAt    DateTime?
+}
+
+model PromptVersion {
+  id            String   @id @default(cuid())
+  agentId       String?
+  agent         Agent?   @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  agentGroupId  String?
+  agentGroup    AgentGroup? @relation(fields: [agentGroupId], references: [id], onDelete: Cascade)
+  versionNumber Int
+  content       String
+  tokenCount    Int      @default(0)
+  changeNote    String?
+  createdBy     String?
+  createdAt     DateTime @default(now())
+}
