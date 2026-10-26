@@ -40,6 +40,7 @@ cd frontend
 cp .env.example .env          # VITE_API_URL=http://localhost:4000
 npm install
 npm run dev                   # open the printed localhost URL
+
 ```
 
 ### Demo logins (seeded)
@@ -168,3 +169,4 @@ export · load add/import.
   socket for the duration of each call) — not on serverless.
 - Set a strong `JWT_SECRET` in production.
 ```
+Contributors: Muhammad Aadam [SAP: 70203107]
